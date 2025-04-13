@@ -253,7 +253,7 @@ class ExcelProcessorApp:
     def clean_data(self, df):
         data_only = df.iloc[1:, :]
         valid_cols = ~data_only.apply(lambda col: col.isna().all() or col.astype(str).str.strip().eq('').all())
-        special_cols = ~data_only.apply(lambda col: col.astype(str).str.contains(r"#!\\$@\\-").any())
+        special_cols = ~data_only.apply(lambda col: col.astype(str).str.contains(r"#!\$@\-").any())
         df = df.loc[:, valid_cols & special_cols]
         return df
 
