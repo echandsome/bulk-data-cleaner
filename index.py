@@ -30,6 +30,59 @@ def process_group_external(country, records, output_dir):
     filename = os.path.join(output_dir, f"{country}.csv")
     sorted_df.to_csv(filename, index=False)
 
+
+def filter_rachinbox_file(input_dir, filename, output_dir):
+    try:
+        path = os.path.join(input_dir, filename)
+        df = pd.read_csv(path)
+        df.columns = [f"Column{i+1}" for i in range(df.shape[1])]
+        filtered_df = pd.DataFrame({
+            "Email": df.iloc[:, 0],
+            "First_Name": df.iloc[:, 2],
+            "Last_Name": df.iloc[:, 3],
+            "Company_Name": df.iloc[:, 13],
+            "Linkdin": df.iloc[:, 12],
+            "Personalised_Lines": df.iloc[:, 31]
+        })
+        filtered_filename = os.path.splitext(filename)[0] + "_rachInbox.csv"
+        filtered_df.to_csv(os.path.join(output_dir, filtered_filename), index=False)
+    except Exception as e:
+        print(f"[rachInbox] Skipped {filename}: {str(e)}")
+
+def filter_ghl_file(input_dir, filename, output_dir):
+    try:
+        path = os.path.join(input_dir, filename)
+        df = pd.read_csv(path)
+        df.columns = [f"Column{i+1}" for i in range(df.shape[1])]
+        filtered_df = pd.DataFrame({
+            "Email": df.iloc[:, 0],
+            "First_Name": df.iloc[:, 1],
+            "Last_Name": df.iloc[:, 2],
+            "Department": df.iloc[:, 5],
+            "Job_Title": df.iloc[:, 6],
+            "Job_Level": df.iloc[:, 7],
+            "City": df.iloc[:, 8],
+            "State": df.iloc[:, 9],
+            "Country": df.iloc[:, 10],
+            "LinkedIn_Profile": df.iloc[:, 12],
+            "Employer": df.iloc[:, 13],
+            "Employer_Website": df.iloc[:, 14],
+            "Phone": df.iloc[:, 15],
+            "Employer_Facebook": df.iloc[:, 16],
+            "Employer_LinkedIn": df.iloc[:, 17],
+            "Employer_Founded_Date": df.iloc[:, 21],
+            "Employer_Zip": df.iloc[:, 24],
+            "Languages_Spoken": df.iloc[:, 27],
+            "Industry": df.iloc[:, 28],
+            "Focus": df.iloc[:, 29],
+            "Skills": df.iloc[:, 30]
+        })
+        filtered_filename = os.path.splitext(filename)[0] + "_ghl.csv"
+        filtered_df.to_csv(os.path.join(output_dir, filtered_filename), index=False)
+    except Exception as e:
+        print(f"[GHL] Skipped {filename}: {str(e)}")
+
+
 class ExcelProcessorApp:
     def __init__(self, root):
         self.root = root
@@ -162,26 +215,31 @@ class ExcelProcessorApp:
                 self.root.update_idletasks()
 
         self.zip_output(output_dir, os.path.dirname(file_path))
-
+  
         self.status_label.config(text="Filtering rachInbox...")
         rach_dir = os.path.join(os.path.dirname(temp_dir), "rachInbox")
-        self.filter_csvs_parallel(output_dir, rach_dir, os.path.dirname(file_path), self.filter_rachinbox_file, 55, 75)
+        self.filter_csvs_parallel(output_dir, rach_dir, os.path.dirname(file_path), filter_rachinbox_file, 55, 75)
 
         self.status_label.config(text="Filtering GHL...")
         ghl_dir = os.path.join(os.path.dirname(temp_dir), "ghl")
-        self.filter_csvs_parallel(output_dir, ghl_dir, os.path.dirname(file_path), self.filter_ghl_file, 75, 95)
+        self.filter_csvs_parallel(output_dir, ghl_dir, os.path.dirname(file_path), filter_ghl_file, 75, 95)
 
         self.progress["value"] = 100
         self.root.update_idletasks()
         self.status_label.config(text="Processing complete.")
-        shutil.rmtree(temp_dir)
+
+        shutil.rmtree(output_dir)
+        shutil.rmtree(rach_dir)
+        shutil.rmtree(ghl_dir)
 
     def filter_csvs_parallel(self, input_dir, output_dir, file_path, handler, start_pct, end_pct):
         os.makedirs(output_dir, exist_ok=True)
+
         files = [f for f in os.listdir(input_dir) if f.endswith(".csv")]
         futures = []
 
         with ProcessPoolExecutor() as executor:
+            
             for file in files:
                 futures.append(executor.submit(handler, input_dir, file, output_dir))
 
@@ -191,57 +249,6 @@ class ExcelProcessorApp:
                 self.root.update_idletasks()
 
         self.zip_output(output_dir, file_path)
-
-    def filter_rachinbox_file(self, input_dir, filename, output_dir):
-        try:
-            path = os.path.join(input_dir, filename)
-            df = pd.read_csv(path)
-            df.columns = [f"Column{i+1}" for i in range(df.shape[1])]
-            filtered_df = pd.DataFrame({
-                "Email": df.iloc[:, 0],
-                "First_Name": df.iloc[:, 2],
-                "Last_Name": df.iloc[:, 3],
-                "Company_Name": df.iloc[:, 13],
-                "Linkdin": df.iloc[:, 12],
-                "Personalised_Lines": df.iloc[:, 31]
-            })
-            filtered_filename = os.path.splitext(filename)[0] + "_rachInbox.csv"
-            filtered_df.to_csv(os.path.join(output_dir, filtered_filename), index=False)
-        except Exception as e:
-            print(f"[rachInbox] Skipped {filename}: {str(e)}")
-
-    def filter_ghl_file(self, input_dir, filename, output_dir):
-        try:
-            path = os.path.join(input_dir, filename)
-            df = pd.read_csv(path)
-            df.columns = [f"Column{i+1}" for i in range(df.shape[1])]
-            filtered_df = pd.DataFrame({
-                "Email": df.iloc[:, 0],
-                "First_Name": df.iloc[:, 1],
-                "Last_Name": df.iloc[:, 2],
-                "Department": df.iloc[:, 5],
-                "Job_Title": df.iloc[:, 6],
-                "Job_Level": df.iloc[:, 7],
-                "City": df.iloc[:, 8],
-                "State": df.iloc[:, 9],
-                "Country": df.iloc[:, 10],
-                "LinkedIn_Profile": df.iloc[:, 12],
-                "Employer": df.iloc[:, 13],
-                "Employer_Website": df.iloc[:, 14],
-                "Phone": df.iloc[:, 15],
-                "Employer_Facebook": df.iloc[:, 16],
-                "Employer_LinkedIn": df.iloc[:, 17],
-                "Employer_Founded_Date": df.iloc[:, 21],
-                "Employer_Zip": df.iloc[:, 24],
-                "Languages_Spoken": df.iloc[:, 27],
-                "Industry": df.iloc[:, 28],
-                "Focus": df.iloc[:, 29],
-                "Skills": df.iloc[:, 30]
-            })
-            filtered_filename = os.path.splitext(filename)[0] + "_ghl.csv"
-            filtered_df.to_csv(os.path.join(output_dir, filtered_filename), index=False)
-        except Exception as e:
-            print(f"[GHL] Skipped {filename}: {str(e)}")
 
     def clean_data(self, df):
         data_only = df.iloc[1:, :]
