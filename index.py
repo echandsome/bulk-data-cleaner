@@ -9,6 +9,7 @@ import multiprocessing
 import tempfile
 import shutil
 from datetime import datetime
+from openpyxl import load_workbook
 
 def excel_col_to_index(col):
     index = 0
@@ -32,7 +33,7 @@ def process_group_external(country, records, output_dir):
 class ExcelProcessorApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Excel Bulk Processor (Column Index Based)")
+        self.root.title("Excel Bulk Processor")
 
         self.queue = []
         self.processing = False
@@ -49,7 +50,6 @@ class ExcelProcessorApp:
         self.file_label.grid(row=0, column=0, columnspan=2)
 
         Button(frm, text="Select File", command=self.select_file).grid(row=1, column=0, columnspan=2, sticky='ew')
-
         Button(frm, text="Select Save Folder", command=self.select_save_folder).grid(row=2, column=0, columnspan=2, sticky='ew', pady=(10, 0))
 
         self.queue_box = Listbox(frm, height=8, width=50)
@@ -97,10 +97,30 @@ class ExcelProcessorApp:
             self.status_label.config(text=f"{os.path.basename(file)} completed")
         self.status_label.config(text="All tasks completed")
 
-    def process_file(self, file_path):
-        temp_dir = tempfile.mkdtemp()
+    def read_excel_with_progress(self, file_path):
+        wb = load_workbook(file_path, read_only=True)
+        ws = wb.active
+        data = []
+        max_rows = ws.max_row
 
-        df = pd.read_excel(file_path, header=None, engine='openpyxl')
+        for i, row in enumerate(ws.iter_rows(values_only=True), start=1):
+            data.append(row)
+            if i % 50 == 0 or i == max_rows:
+                self.progress["value"] = int((i / max_rows) * 10)
+                self.root.update_idletasks()
+
+        wb.close()
+        self.progress["value"] = 10
+        return pd.DataFrame(data)
+
+    def process_file(self, file_path):
+        self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.progress["value"] = 0
+        self.root.update_idletasks()
+
+        temp_dir = tempfile.mkdtemp()
+        self.status_label.config(text="Reading Excel...")
+        df = self.read_excel_with_progress(file_path)
         df.columns = [f"Column{i+1}" for i in range(df.shape[1])]
 
         try:
@@ -116,7 +136,6 @@ class ExcelProcessorApp:
             return
 
         df = self.clean_data(df)
-
         new_columns = []
         for i, col in enumerate(df.columns):
             if col in ['Country', 'Language', 'Occupation', 'Industry']:
@@ -125,110 +144,115 @@ class ExcelProcessorApp:
                 new_columns.append(f"Column{i+1}")
         df.columns = new_columns
 
+        self.status_label.config(text="Processing by country...")
         grouped = df.groupby('Country')
         output_dir = os.path.join(os.path.dirname(temp_dir), "processed")
         os.makedirs(output_dir, exist_ok=True)
 
-        num_workers = max(1, int(multiprocessing.cpu_count() * 0.5))
+        country_futures = []
+        with ProcessPoolExecutor(max_workers=max(1, multiprocessing.cpu_count() // 2)) as executor:
+            for country, group in grouped:
+                records = group.to_dict('records')
+                future = executor.submit(process_group_external, country, records, output_dir)
+                country_futures.append(future)
+
+            total = len(country_futures)
+            for i, f in enumerate(as_completed(country_futures), 1):
+                self.progress["value"] = 10 + int((i / total) * 45)
+                self.root.update_idletasks()
+
+        self.zip_output(output_dir, os.path.dirname(file_path))
+
+        self.status_label.config(text="Filtering rachInbox...")
+        rach_dir = os.path.join(os.path.dirname(temp_dir), "rachInbox")
+        self.filter_csvs_parallel(output_dir, rach_dir, os.path.dirname(file_path), self.filter_rachinbox_file, 55, 75)
+
+        self.status_label.config(text="Filtering GHL...")
+        ghl_dir = os.path.join(os.path.dirname(temp_dir), "ghl")
+        self.filter_csvs_parallel(output_dir, ghl_dir, os.path.dirname(file_path), self.filter_ghl_file, 75, 95)
+
+        self.progress["value"] = 100
+        self.root.update_idletasks()
+        self.status_label.config(text="Processing complete.")
+        shutil.rmtree(temp_dir)
+
+    def filter_csvs_parallel(self, input_dir, output_dir, file_path, handler, start_pct, end_pct):
+        os.makedirs(output_dir, exist_ok=True)
+        files = [f for f in os.listdir(input_dir) if f.endswith(".csv")]
         futures = []
 
+        with ProcessPoolExecutor() as executor:
+            for file in files:
+                futures.append(executor.submit(handler, input_dir, file, output_dir))
+
+            total = len(futures)
+            for i, f in enumerate(as_completed(futures), 1):
+                self.progress["value"] = start_pct + int((i / total) * (end_pct - start_pct))
+                self.root.update_idletasks()
+
+        self.zip_output(output_dir, file_path)
+
+    def filter_rachinbox_file(self, input_dir, filename, output_dir):
         try:
-            with ProcessPoolExecutor(max_workers=num_workers) as executor:
-                for country, group in grouped:
-                    records = group.to_dict('records')
-                    futures.append(
-                        executor.submit(process_group_external, country, records, output_dir)
-                    )
-
-                total = len(futures)
-                for i, f in enumerate(as_completed(futures), start=1):
-                    self.progress["value"] = int((i / total) * 100)
-                    self.root.update_idletasks()
-
-            self.zip_output(output_dir, os.path.dirname(file_path))
+            path = os.path.join(input_dir, filename)
+            df = pd.read_csv(path)
+            df.columns = [f"Column{i+1}" for i in range(df.shape[1])]
+            filtered_df = pd.DataFrame({
+                "Email": df.iloc[:, 0],
+                "First_Name": df.iloc[:, 2],
+                "Last_Name": df.iloc[:, 3],
+                "Company_Name": df.iloc[:, 13],
+                "Linkdin": df.iloc[:, 12],
+                "Personalised_Lines": df.iloc[:, 31]
+            })
+            filtered_filename = os.path.splitext(filename)[0] + "_rachInbox.csv"
+            filtered_df.to_csv(os.path.join(output_dir, filtered_filename), index=False)
         except Exception as e:
-            self.status_label.config(text=f"Error during sorting: {str(e)}")
+            print(f"[rachInbox] Skipped {filename}: {str(e)}")
 
+    def filter_ghl_file(self, input_dir, filename, output_dir):
         try:
-            filtered_dir = os.path.join(os.path.dirname(temp_dir), "rachInbox")
-            os.makedirs(filtered_dir, exist_ok=True)
-
-            for file in os.listdir(output_dir):
-                if file.endswith(".csv"):
-                    _file_path = os.path.join(output_dir, file)
-                    df = pd.read_csv(_file_path)
-                    df.columns = [f"Column{i+1}" for i in range(df.shape[1])]
-                    try:
-                        filtered_df = pd.DataFrame({
-                            "Email": df.iloc[:, 0],
-                            "First_Name": df.iloc[:, 2],
-                            "Last_Name": df.iloc[:, 3],
-                            "Company_Name": df.iloc[:, 13],
-                            "Linkdin": df.iloc[:, 12],
-                            "Personalised_Lines": df.iloc[:, 31]
-                        })
-                        filtered_filename = os.path.splitext(file)[0] + "_rachInbox.csv"
-                        filtered_df.to_csv(os.path.join(filtered_dir, filtered_filename), index=False)
-                    except IndexError:
-                        print(f"Skipping {file}: One or more required columns are missing.")
-            self.zip_output(filtered_dir, os.path.dirname(file_path))
+            path = os.path.join(input_dir, filename)
+            df = pd.read_csv(path)
+            df.columns = [f"Column{i+1}" for i in range(df.shape[1])]
+            filtered_df = pd.DataFrame({
+                "Email": df.iloc[:, 0],
+                "First_Name": df.iloc[:, 1],
+                "Last_Name": df.iloc[:, 2],
+                "Department": df.iloc[:, 5],
+                "Job_Title": df.iloc[:, 6],
+                "Job_Level": df.iloc[:, 7],
+                "City": df.iloc[:, 8],
+                "State": df.iloc[:, 9],
+                "Country": df.iloc[:, 10],
+                "LinkedIn_Profile": df.iloc[:, 12],
+                "Employer": df.iloc[:, 13],
+                "Employer_Website": df.iloc[:, 14],
+                "Phone": df.iloc[:, 15],
+                "Employer_Facebook": df.iloc[:, 16],
+                "Employer_LinkedIn": df.iloc[:, 17],
+                "Employer_Founded_Date": df.iloc[:, 21],
+                "Employer_Zip": df.iloc[:, 24],
+                "Languages_Spoken": df.iloc[:, 27],
+                "Industry": df.iloc[:, 28],
+                "Focus": df.iloc[:, 29],
+                "Skills": df.iloc[:, 30]
+            })
+            filtered_filename = os.path.splitext(filename)[0] + "_ghl.csv"
+            filtered_df.to_csv(os.path.join(output_dir, filtered_filename), index=False)
         except Exception as e:
-            self.status_label.config(text=f"Error during filtering: {str(e)}")
-
-        try:
-            filtered_dir = os.path.join(os.path.dirname(temp_dir), "ghl")
-            os.makedirs(filtered_dir, exist_ok=True)
-
-            for file in os.listdir(output_dir):
-                if file.endswith(".csv"):
-                    _file_path = os.path.join(output_dir, file)
-                    df = pd.read_csv(_file_path)
-                    df.columns = [f"Column{i+1}" for i in range(df.shape[1])]
-                    try:
-                        filtered_df = pd.DataFrame({
-                            "Email": df.iloc[:, 0],
-                            "First_Name": df.iloc[:, 1],
-                            "Last_Name": df.iloc[:, 2],
-                            "Department": df.iloc[:, 5],
-                            "Job_Title": df.iloc[:, 6],
-                            "Job_Level": df.iloc[:, 7],
-                            "City": df.iloc[:, 8],
-                            "State": df.iloc[:, 9],
-                            "Country": df.iloc[:, 10],
-                            "LinkedIn_Profile": df.iloc[:, 12],
-                            "Employer": df.iloc[:, 13],
-                            "Employer_Website": df.iloc[:, 14],
-                            "Phone": df.iloc[:, 15],
-                            "Employer_Facebook": df.iloc[:, 16],
-                            "Employer_LinkedIn": df.iloc[:, 17],
-                            "Employer_Founded_Date": df.iloc[:, 21],
-                            "Employer_Zip": df.iloc[:, 24],
-                            "Languages_Spoken": df.iloc[:, 27],
-                            "Industry": df.iloc[:, 28],
-                            "Focus": df.iloc[:, 29],
-                            "Skills": df.iloc[:, 30]
-                        })
-                        filtered_filename = os.path.splitext(file)[0] + "_ghl.csv"
-                        filtered_df.to_csv(os.path.join(filtered_dir, filtered_filename), index=False)
-                    except IndexError:
-                        print(f"Skipping {file}: One or more required columns are missing.")
-            self.zip_output(filtered_dir, os.path.dirname(file_path))
-        except Exception as e:
-            self.status_label.config(text=f"Error during filtering: {str(e)}")
-
-        shutil.rmtree(temp_dir)
+            print(f"[GHL] Skipped {filename}: {str(e)}")
 
     def clean_data(self, df):
         data_only = df.iloc[1:, :]
         valid_cols = ~data_only.apply(lambda col: col.isna().all() or col.astype(str).str.strip().eq('').all())
-        special_cols = ~data_only.apply(lambda col: col.astype(str).str.contains(r"#!\$@\-").any())
+        special_cols = ~data_only.apply(lambda col: col.astype(str).str.contains(r"#!\\$@\\-").any())
         df = df.loc[:, valid_cols & special_cols]
         return df
 
     def zip_output(self, source_dir, default_destination_dir):
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         folder_name = os.path.basename(source_dir.rstrip(os.sep))
-        zip_filename = f"{folder_name}_{timestamp}.zip"
+        zip_filename = f"{folder_name}_{self.timestamp}.zip"
         zip_path = os.path.join(os.path.dirname(source_dir), zip_filename)
 
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
@@ -242,8 +266,6 @@ class ExcelProcessorApp:
 
         final_zip_path = os.path.join(destination_dir, zip_filename)
         shutil.move(zip_path, final_zip_path)
-
-        # self.status_label.config(text=f"Compression completed: {final_zip_path}")
 
 if __name__ == "__main__":
     root = Tk()
