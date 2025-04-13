@@ -40,9 +40,9 @@ def filter_rachinbox_file(input_dir, filename, output_dir):
             "Email": df.iloc[:, 0],
             "First_Name": df.iloc[:, 2],
             "Last_Name": df.iloc[:, 3],
-            "Company_Name": df.iloc[:, 13],
-            "Linkdin": df.iloc[:, 12],
-            "Personalised_Lines": df.iloc[:, 31]
+            "Company_Name": df.iloc[:, 14],
+            "Linkdin": df.iloc[:, 13],
+            "Personalised_Lines": df.iloc[:, 32]
         })
         filtered_filename = os.path.splitext(filename)[0] + "_rachInbox.csv"
         filtered_df.to_csv(os.path.join(output_dir, filtered_filename), index=False)
@@ -58,24 +58,24 @@ def filter_ghl_file(input_dir, filename, output_dir):
             "Email": df.iloc[:, 0],
             "First_Name": df.iloc[:, 1],
             "Last_Name": df.iloc[:, 2],
-            "Department": df.iloc[:, 5],
-            "Job_Title": df.iloc[:, 6],
-            "Job_Level": df.iloc[:, 7],
-            "City": df.iloc[:, 8],
-            "State": df.iloc[:, 9],
-            "Country": df.iloc[:, 10],
-            "LinkedIn_Profile": df.iloc[:, 12],
-            "Employer": df.iloc[:, 13],
-            "Employer_Website": df.iloc[:, 14],
-            "Phone": df.iloc[:, 15],
-            "Employer_Facebook": df.iloc[:, 16],
-            "Employer_LinkedIn": df.iloc[:, 17],
-            "Employer_Founded_Date": df.iloc[:, 21],
-            "Employer_Zip": df.iloc[:, 24],
-            "Languages_Spoken": df.iloc[:, 27],
-            "Industry": df.iloc[:, 28],
-            "Focus": df.iloc[:, 29],
-            "Skills": df.iloc[:, 30]
+            "Department": df.iloc[:, 6],
+            "Job_Title": df.iloc[:, 7],
+            "Job_Level": df.iloc[:, 8],
+            "City": df.iloc[:, 9],
+            "State": df.iloc[:, 10],
+            "Country": df.iloc[:, 11],
+            "LinkedIn_Profile": df.iloc[:, 13],
+            "Employer": df.iloc[:, 14],
+            "Employer_Website": df.iloc[:, 15],
+            "Phone": df.iloc[:, 16],
+            "Employer_Facebook": df.iloc[:, 17],
+            "Employer_LinkedIn": df.iloc[:, 18],
+            "Employer_Founded_Date": df.iloc[:, 22],
+            "Employer_Zip": df.iloc[:, 25],
+            "Languages_Spoken": df.iloc[:, 28],
+            "Industry": df.iloc[:, 29],
+            "Focus": df.iloc[:, 30],
+            "Skills": df.iloc[:, 31]
         })
         filtered_filename = os.path.splitext(filename)[0] + "_ghl.csv"
         filtered_df.to_csv(os.path.join(output_dir, filtered_filename), index=False)
@@ -251,10 +251,14 @@ class ExcelProcessorApp:
         self.zip_output(output_dir, file_path)
 
     def clean_data(self, df):
-        data_only = df.iloc[1:, :]
-        valid_cols = ~data_only.apply(lambda col: col.isna().all() or col.astype(str).str.strip().eq('').all())
-        special_cols = ~data_only.apply(lambda col: col.astype(str).str.contains(r"#!\$@\-").any())
-        df = df.loc[:, valid_cols & special_cols]
+        df = df.iloc[:, [i for i in range(df.shape[1]) if i % 2 == 0]]
+
+        # data_only = df.iloc[1:, :]
+        # valid_cols = ~data_only.apply(lambda col: col.isna().all() or col.astype(str).str.strip().eq('').all())
+        # df = df.loc[:, valid_cols]
+
+        df = df.applymap(lambda x: '' if isinstance(x, str) and '#!$@-' in x else x)
+
         return df
 
     def zip_output(self, source_dir, default_destination_dir):
