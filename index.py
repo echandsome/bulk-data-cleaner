@@ -124,7 +124,7 @@ class ExcelProcessorApp:
                 new_columns.append(f"Column{i+1}")
         df.columns = new_columns
 
-        # ✅ Grouping and parallel processing
+        # Grouping and parallel processing
         grouped = df.groupby('Country')
         output_dir = os.path.join(os.path.dirname(file_path), "processed")
         os.makedirs(output_dir, exist_ok=True)
@@ -133,29 +133,32 @@ class ExcelProcessorApp:
         futures = []
 
         # 1
-        with ProcessPoolExecutor(max_workers=num_workers) as executor:
-            for country, group in grouped:
-                records = group.to_dict('records')
-                futures.append(
-                    executor.submit(process_group_external, country, records, output_dir)
-                )
+        try:
+            with ProcessPoolExecutor(max_workers=num_workers) as executor:
+                for country, group in grouped:
+                    records = group.to_dict('records')
+                    futures.append(
+                        executor.submit(process_group_external, country, records, output_dir)
+                    )
 
-            total = len(futures)
-            for i, f in enumerate(as_completed(futures), start=1):
-                self.progress["value"] = int((i / total) * 100)
-                self.root.update_idletasks()
+                total = len(futures)
+                for i, f in enumerate(as_completed(futures), start=1):
+                    self.progress["value"] = int((i / total) * 100)
+                    self.root.update_idletasks()
 
-        self.zip_output(output_dir)
+            self.zip_output(output_dir)
+        except Exception as e:
+            self.status_label.config(text=f"Error during sorting: {str(e)}")
 
         # 2
         try:
-            filtered_dir = os.path.join(os.path.dirname(file_path), "filtered")
+            filtered_dir = os.path.join(os.path.dirname(file_path), "rachInbox")
             os.makedirs(filtered_dir, exist_ok=True)
 
             for file in os.listdir(output_dir):
                 if file.endswith(".csv"):
-                    file_path = os.path.join(output_dir, file)
-                    df = pd.read_csv(file_path)
+                    _file_path = os.path.join(output_dir, file)
+                    df = pd.read_csv(_file_path)
 
                     # Reassign column names (Column1, Column2, ...)
                     df.columns = [f"Column{i+1}" for i in range(df.shape[1])]
@@ -169,13 +172,58 @@ class ExcelProcessorApp:
                             "Linkdin": df.iloc[:, 12],         # M
                             "Personalised_Lines": df.iloc[:, 31]  # AF
                         })
-                        filtered_filename = os.path.splitext(file)[0] + "_filtered.csv"
+                        filtered_filename = os.path.splitext(file)[0] + "_rachInbox.csv"
                         filtered_df.to_csv(os.path.join(filtered_dir, filtered_filename), index=False)
                     except IndexError:
                         print(f"Skipping {file}: One or more required columns are missing.")
 
             self.zip_output(filtered_dir)
+        except Exception as e:
+            self.status_label.config(text=f"Error during filtering: {str(e)}")
 
+        # 3
+        try:
+            filtered_dir = os.path.join(os.path.dirname(file_path), "ghl")
+            os.makedirs(filtered_dir, exist_ok=True)
+
+            for file in os.listdir(output_dir):
+                if file.endswith(".csv"):
+                    _file_path = os.path.join(output_dir, file)
+                    df = pd.read_csv(_file_path)
+
+                    # Reassign column names (Column1, Column2, ...)
+                    df.columns = [f"Column{i+1}" for i in range(df.shape[1])]
+
+                    try:
+                        filtered_df = pd.DataFrame({
+                            "Email": df.iloc[:, 0],                  # A
+                            "First_Name": df.iloc[:, 1],             # B
+                            "Last_Name": df.iloc[:, 2],              # C
+                            "Department": df.iloc[:, 5],             # F
+                            "Job_Title": df.iloc[:, 6],              # G
+                            "Job_Level": df.iloc[:, 7],              # H
+                            "City": df.iloc[:, 8],                   # I
+                            "State": df.iloc[:, 9],                  # J
+                            "Country": df.iloc[:, 10],               # K
+                            "LinkedIn_Profile": df.iloc[:, 12],      # M
+                            "Employer": df.iloc[:, 13],              # N
+                            "Employer_Website": df.iloc[:, 14],      # O
+                            "Phone": df.iloc[:, 15],                 # P
+                            "Employer_Facebook": df.iloc[:, 16],     # Q
+                            "Employer_LinkedIn": df.iloc[:, 17],     # R
+                            "Employer_Founded_Date": df.iloc[:, 21], # V
+                            "Employer_Zip": df.iloc[:, 24],          # X
+                            "Languages_Spoken": df.iloc[:, 27],      # AB
+                            "Industry": df.iloc[:, 28],              # AC
+                            "Focus": df.iloc[:, 29],                 # AD
+                            "Skills": df.iloc[:, 30]                 # AE
+                        })
+                        filtered_filename = os.path.splitext(file)[0] + "_ghl.csv"
+                        filtered_df.to_csv(os.path.join(filtered_dir, filtered_filename), index=False)
+                    except IndexError:
+                        print(f"Skipping {file}: One or more required columns are missing.")
+
+            self.zip_output(filtered_dir)
         except Exception as e:
             self.status_label.config(text=f"Error during filtering: {str(e)}")
 
