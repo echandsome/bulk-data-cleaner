@@ -131,6 +131,8 @@ class ExcelProcessorApp:
 
         num_workers = max(1, int(multiprocessing.cpu_count() * 0.5))
         futures = []
+
+        # 1
         with ProcessPoolExecutor(max_workers=num_workers) as executor:
             for country, group in grouped:
                 records = group.to_dict('records')
@@ -144,6 +146,39 @@ class ExcelProcessorApp:
                 self.root.update_idletasks()
 
         self.zip_output(output_dir)
+
+        # 2
+        try:
+            filtered_dir = os.path.join(os.path.dirname(file_path), "filtered")
+            os.makedirs(filtered_dir, exist_ok=True)
+
+            for file in os.listdir(output_dir):
+                if file.endswith(".csv"):
+                    file_path = os.path.join(output_dir, file)
+                    df = pd.read_csv(file_path)
+
+                    # Reassign column names (Column1, Column2, ...)
+                    df.columns = [f"Column{i+1}" for i in range(df.shape[1])]
+
+                    try:
+                        filtered_df = pd.DataFrame({
+                            "Email": df.iloc[:, 0],            # A
+                            "First_Name": df.iloc[:, 2],       # C
+                            "Last_Name": df.iloc[:, 3],        # D
+                            "Company_Name": df.iloc[:, 13],    # N
+                            "Linkdin": df.iloc[:, 12],         # M
+                            "Personalised_Lines": df.iloc[:, 31]  # AF
+                        })
+                        filtered_filename = os.path.splitext(file)[0] + "_filtered.csv"
+                        filtered_df.to_csv(os.path.join(filtered_dir, filtered_filename), index=False)
+                    except IndexError:
+                        print(f"Skipping {file}: One or more required columns are missing.")
+
+            self.zip_output(filtered_dir)
+
+        except Exception as e:
+            self.status_label.config(text=f"Error during filtering: {str(e)}")
+
 
     def clean_data(self, df):
         data_only = df.iloc[1:, :]
