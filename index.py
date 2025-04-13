@@ -6,6 +6,9 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from tkinter import *
 from tkinter import filedialog, messagebox, ttk
 import multiprocessing
+import tempfile
+import shutil
+from datetime import datetime
 
 # Excel column index conversion function
 def excel_col_to_index(col):
@@ -96,12 +99,14 @@ class ExcelProcessorApp:
         self.status_label.config(text="All tasks completed")
 
     def process_file(self, file_path):
+        temp_dir = tempfile.mkdtemp()
+
         df = pd.read_excel(file_path, header=None, engine='openpyxl')
 
-        # ✅ Assign column names: column1, column2, ...
+        # Assign column names: column1, column2, ...
         df.columns = [f"Column{i+1}" for i in range(df.shape[1])]
 
-        # ✅ Rename columns
+        # Rename columns
         try:
             rename_map = {
                 df.columns[EXCEL_INDEX['country']]: 'Country',
@@ -126,7 +131,7 @@ class ExcelProcessorApp:
 
         # Grouping and parallel processing
         grouped = df.groupby('Country')
-        output_dir = os.path.join(os.path.dirname(file_path), "processed")
+        output_dir = os.path.join(os.path.dirname(temp_dir), "processed")
         os.makedirs(output_dir, exist_ok=True)
 
         num_workers = max(1, int(multiprocessing.cpu_count() * 0.5))
@@ -146,13 +151,13 @@ class ExcelProcessorApp:
                     self.progress["value"] = int((i / total) * 100)
                     self.root.update_idletasks()
 
-            self.zip_output(output_dir)
+            self.zip_output(output_dir, os.path.dirname(file_path))
         except Exception as e:
             self.status_label.config(text=f"Error during sorting: {str(e)}")
 
         # 2
         try:
-            filtered_dir = os.path.join(os.path.dirname(file_path), "rachInbox")
+            filtered_dir = os.path.join(os.path.dirname(temp_dir), "rachInbox")
             os.makedirs(filtered_dir, exist_ok=True)
 
             for file in os.listdir(output_dir):
@@ -177,13 +182,13 @@ class ExcelProcessorApp:
                     except IndexError:
                         print(f"Skipping {file}: One or more required columns are missing.")
 
-            self.zip_output(filtered_dir)
+            self.zip_output(filtered_dir, os.path.dirname(file_path))
         except Exception as e:
             self.status_label.config(text=f"Error during filtering: {str(e)}")
 
         # 3
         try:
-            filtered_dir = os.path.join(os.path.dirname(file_path), "ghl")
+            filtered_dir = os.path.join(os.path.dirname(temp_dir), "ghl")
             os.makedirs(filtered_dir, exist_ok=True)
 
             for file in os.listdir(output_dir):
@@ -223,10 +228,11 @@ class ExcelProcessorApp:
                     except IndexError:
                         print(f"Skipping {file}: One or more required columns are missing.")
 
-            self.zip_output(filtered_dir)
+            self.zip_output(filtered_dir, os.path.dirname(file_path))
         except Exception as e:
             self.status_label.config(text=f"Error during filtering: {str(e)}")
 
+        shutil.rmtree(temp_dir)
 
     def clean_data(self, df):
         data_only = df.iloc[1:, :]
@@ -242,14 +248,31 @@ class ExcelProcessorApp:
 
         return df
 
-    def zip_output(self, output_dir):
-        zip_path = output_dir + ".zip"
+    def zip_output(self, source_dir, destination_dir):
+        # Generate a timestamp (e.g., 20250413_153245)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        # Create a zip file name with the timestamp
+        folder_name = os.path.basename(source_dir.rstrip(os.sep))  # e.g., "my_folder"
+        zip_filename = f"{folder_name}_{timestamp}.zip"
+        zip_path = os.path.join(os.path.dirname(source_dir), zip_filename)
+
+        # Create the ZIP archive
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-            for file in os.listdir(output_dir):
-                full_path = os.path.join(output_dir, file)
+            for file in os.listdir(source_dir):
+                full_path = os.path.join(source_dir, file)
                 if os.path.isfile(full_path):
                     zipf.write(full_path, arcname=file)
-        self.status_label.config(text=f"Compression completed: {zip_path}")
+
+        # Ensure the destination directory exists
+        os.makedirs(destination_dir, exist_ok=True)
+
+        # Move the ZIP file to the destination directory
+        final_zip_path = os.path.join(destination_dir, zip_filename)
+        shutil.move(zip_path, final_zip_path)
+
+        # Update status in UI
+        self.status_label.config(text=f"Compression completed: {final_zip_path}")
 
 if __name__ == "__main__":
     root = Tk()
