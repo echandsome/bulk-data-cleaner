@@ -322,6 +322,7 @@ class ExcelProcessorApp:
         shutil.move(zip_path, final_zip_path)
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
     root = Tk()
     app = ExcelProcessorApp(root)
     root.mainloop()
