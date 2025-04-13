@@ -7,6 +7,7 @@ from tkinter import *
 from tkinter import filedialog, messagebox, ttk
 import multiprocessing
 
+# Excel column index conversion function
 def excel_col_to_index(col):
     index = 0
     for i, char in enumerate(reversed(col)):
@@ -20,6 +21,14 @@ EXCEL_INDEX = {
     'industry': excel_col_to_index('BI')
 }
 
+# Group processing function for external processes
+def process_group_external(country, records, output_dir):
+    df = pd.DataFrame(records)
+    sorted_df = df.sort_values(by=['Language', 'Occupation', 'Industry'])
+    filename = os.path.join(output_dir, f"{country}.csv")
+    sorted_df.to_csv(filename, index=False)
+
+# Main class
 class ExcelProcessorApp:
     def __init__(self, root):
         self.root = root
@@ -106,7 +115,10 @@ class ExcelProcessorApp:
         futures = []
         with ProcessPoolExecutor(max_workers=num_workers) as executor:
             for country, group in grouped:
-                futures.append(executor.submit(self.process_group, country, group, output_dir))
+                records = group.to_dict('records')
+                futures.append(
+                    executor.submit(process_group_external, country, records, output_dir)
+                )
 
             total = len(futures)
             for i, f in enumerate(as_completed(futures), start=1):
@@ -120,16 +132,13 @@ class ExcelProcessorApp:
         df = df.loc[:, ~df.apply(lambda col: col.astype(str).str.match(r'^[#!$@\-]+$').all())]
         return df
 
-    def process_group(self, country, group_df, output_dir):
-        sorted_df = group_df.sort_values(by=['Language', 'Occupation', 'Industry'])
-        filename = os.path.join(output_dir, f"{country}.csv")
-        sorted_df.to_csv(filename, index=False)
-
     def zip_output(self, output_dir):
         zip_path = output_dir + ".zip"
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
             for file in os.listdir(output_dir):
-                zipf.write(os.path.join(output_dir, file), arcname=file)
+                full_path = os.path.join(output_dir, file)
+                if os.path.isfile(full_path):
+                    zipf.write(full_path, arcname=file)
         self.status_label.config(text=f"Compression completed: {zip_path}")
 
 if __name__ == "__main__":
