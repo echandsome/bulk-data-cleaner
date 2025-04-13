@@ -15,10 +15,10 @@ def excel_col_to_index(col):
     return index - 1
 
 EXCEL_INDEX = {
-    'country': excel_col_to_index('BA'),
+    'country': excel_col_to_index('W'),
     'language': excel_col_to_index('BE'),
     'occupation': excel_col_to_index('K'),
-    'industry': excel_col_to_index('BI')
+    'industry': excel_col_to_index('BG')
 }
 
 # Group processing function for external processes
@@ -98,8 +98,6 @@ class ExcelProcessorApp:
     def process_file(self, file_path):
         df = pd.read_excel(file_path, header=None, engine='openpyxl')
 
-        df = self.clean_data(df)
-
         # ✅ Assign column names: column1, column2, ...
         df.columns = [f"Column{i+1}" for i in range(df.shape[1])]
 
@@ -115,6 +113,16 @@ class ExcelProcessorApp:
         except IndexError:
             self.status_label.config(text="Specified column index exceeds range")
             return
+
+        df = self.clean_data(df)
+
+        new_columns = []
+        for i, col in enumerate(df.columns):
+            if col in ['Country', 'Language', 'Occupation', 'Industry']:
+                new_columns.append(col)
+            else:
+                new_columns.append(f"Column{i+1}")
+        df.columns = new_columns
 
         # ✅ Grouping and parallel processing
         grouped = df.groupby('Country')
@@ -138,11 +146,16 @@ class ExcelProcessorApp:
         self.zip_output(output_dir)
 
     def clean_data(self, df):
-        # ✅ Remove columns that are entirely NaN
-        df = df.dropna(axis=1, how='all')
+        data_only = df.iloc[1:, :]
 
-        # ✅ Remove columns that contain "#!$@-"
-        df = df.loc[:, ~df.apply(lambda col: col.astype(str).str.contains(r"#!$@-").any())]
+        # 1. Remove columns where all values are empty (including NaN, empty strings, and whitespace)
+        valid_cols = ~data_only.apply(lambda col: col.isna().all() or col.astype(str).str.strip().eq('').all())
+
+        # 2. Remove columns containing only special characters
+        special_cols = ~data_only.apply(lambda col: col.astype(str).str.contains(r"#!\$@\-").any())
+
+        # 3. Select columns that satisfy both conditions
+        df = df.loc[:, valid_cols & special_cols]
 
         return df
 
