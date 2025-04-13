@@ -97,21 +97,31 @@ class ExcelProcessorApp:
 
     def process_file(self, file_path):
         df = pd.read_excel(file_path, header=None, engine='openpyxl')
+
         df = self.clean_data(df)
 
-        df = df.rename(columns={
-            EXCEL_INDEX['country']: 'Country',
-            EXCEL_INDEX['language']: 'Language',
-            EXCEL_INDEX['occupation']: 'Occupation',
-            EXCEL_INDEX['industry']: 'Industry'
-        })
+        # ✅ Assign column names: column1, column2, ...
+        df.columns = [f"Column{i+1}" for i in range(df.shape[1])]
 
+        # ✅ Rename columns
+        try:
+            rename_map = {
+                df.columns[EXCEL_INDEX['country']]: 'Country',
+                df.columns[EXCEL_INDEX['language']]: 'Language',
+                df.columns[EXCEL_INDEX['occupation']]: 'Occupation',
+                df.columns[EXCEL_INDEX['industry']]: 'Industry'
+            }
+            df = df.rename(columns=rename_map)
+        except IndexError:
+            self.status_label.config(text="Specified column index exceeds range")
+            return
+
+        # ✅ Grouping and parallel processing
         grouped = df.groupby('Country')
         output_dir = os.path.join(os.path.dirname(file_path), "processed")
         os.makedirs(output_dir, exist_ok=True)
 
         num_workers = max(1, int(multiprocessing.cpu_count() * 0.5))
-
         futures = []
         with ProcessPoolExecutor(max_workers=num_workers) as executor:
             for country, group in grouped:
@@ -128,8 +138,12 @@ class ExcelProcessorApp:
         self.zip_output(output_dir)
 
     def clean_data(self, df):
+        # ✅ Remove columns that are entirely NaN
         df = df.dropna(axis=1, how='all')
-        df = df.loc[:, ~df.apply(lambda col: col.astype(str).str.match(r'^[#!$@\-]+$').all())]
+
+        # ✅ Remove columns that contain "#!$@-"
+        df = df.loc[:, ~df.apply(lambda col: col.astype(str).str.contains(r"#!$@-").any())]
+
         return df
 
     def zip_output(self, output_dir):
