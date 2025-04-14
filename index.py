@@ -10,6 +10,7 @@ import tempfile
 import shutil
 from datetime import datetime
 from openpyxl import load_workbook
+import csv
 
 def excel_col_to_index(col):
     index = 0
@@ -81,6 +82,64 @@ def filter_ghl_file(input_dir, filename, output_dir):
     except Exception as e:
         print(f"[GHL] Skipped {filename}: {str(e)}")
 
+def split_large_csv_files(src_folder, size_limit=48):
+
+    for root, dirs, files in os.walk(src_folder):
+        for file in files:
+            if file.lower().endswith('.csv'):  # Only process CSV files
+                file_path = os.path.join(root, file)
+                file_size = os.path.getsize(file_path) / (1024 * 1024)  # Convert size to MB
+
+                # Process file if it's larger than the specified limit
+                if file_size >= size_limit:
+                    print(f"Processing file {file} of size {file_size:.2f} MB")
+
+                    with open(file_path, mode='r', newline='', encoding='utf-8') as f:
+                        reader = csv.reader(f)
+                        header = next(reader)  # Read the header row
+                        rows = list(reader)  # Read all the data rows
+
+                    # Start splitting the file into smaller files
+                    data_chunk = []
+                    current_size = 0
+                    part_number = 1
+
+                    for row in rows:
+                        # Add row to current chunk
+                        data_chunk.append(row)
+                        current_size += len(','.join(row))  # Approximate size by row length
+
+                        # If current size exceeds the size limit, write to a new file
+                        if current_size >= size_limit * 1024 * 1024:
+                            # Define the new split file path
+                            new_file_path = os.path.join(root, f"{file}_part_{part_number}.csv")
+                            with open(new_file_path, mode='w', newline='', encoding='utf-8') as new_file:
+                                writer = csv.writer(new_file)
+                                writer.writerow(header)  # Write header to the new file
+                                writer.writerows(data_chunk)  # Write the data chunk to the new file
+
+                            print(f"Created: {new_file_path}")
+
+                            # Reset for the next chunk
+                            part_number += 1
+                            data_chunk = []
+                            current_size = 0
+
+                    # If there are any remaining rows, write them to a final file
+                    if data_chunk:
+                        new_file_path = os.path.join(root, f"{file}_part_{part_number}.csv")
+                        with open(new_file_path, mode='w', newline='', encoding='utf-8') as new_file:
+                            writer = csv.writer(new_file)
+                            writer.writerow(header)  # Write header to the new file
+                            writer.writerows(data_chunk)  # Write the remaining data
+                        print(f"Created: {new_file_path}")
+                    
+                    # Delete the large file
+                    os.remove(file_path)
+                    print(f"Deleted: {file} ({file_size:.2f} MB)")
+                else:
+                    print(f"File {file} is under {size_limit} MB, keeping it as is.")
+
 class ExcelProcessorApp:
     def __init__(self, root):
         self.root = root
@@ -91,6 +150,7 @@ class ExcelProcessorApp:
         self.paused = False
         self.stopped = False
         self.save_dir = None
+        self.temp_dirs = []
 
         self.setup_gui()
 
@@ -120,6 +180,9 @@ class ExcelProcessorApp:
         self.progress.grid(row=6, column=0, columnspan=2, pady=5)
 
     def toggle_start_stop(self):
+        if not self.save_dir:
+            messagebox.showwarning("Save Folder Required", "Please select a save folder before starting.")
+            return
         if not self.processing:
             self.start_processing()
             self.start_stop_button.config(text="Stop")
@@ -139,11 +202,33 @@ class ExcelProcessorApp:
             self.pause_resume_button.config(text="Pause")
 
     def select_file(self):
-        file_path = filedialog.askopenfilename(filetypes=[("Excel Files", "*.xlsx")])
-        if file_path:
+        file_path = filedialog.askopenfilename(filetypes=[("Excel or ZIP Files", "*.xlsx *.zip")])
+        if not file_path:
+            return
+
+        if file_path.endswith('.xlsx'):
             self.queue.append(file_path)
             self.queue_box.insert(END, os.path.basename(file_path))
             self.file_label.config(text="No file selected")
+
+        elif file_path.endswith('.zip'):
+            temp_zip_dir = tempfile.mkdtemp()
+            self.temp_dirs.append(temp_zip_dir)
+            try:
+                with zipfile.ZipFile(file_path, 'r') as zip_ref:
+                    xlsx_files = [f for f in zip_ref.namelist() if f.endswith('.xlsx')]
+                    if not xlsx_files:
+                        messagebox.showwarning("No Excel Files", "There are no .xlsx files in the ZIP file.")
+                        return
+
+                    for xlsx_file in xlsx_files:
+                        extracted_path = zip_ref.extract(xlsx_file, temp_zip_dir)
+                        self.queue.append(extracted_path)
+                        self.queue_box.insert(END, os.path.basename(extracted_path))
+
+                    self.file_label.config(text=f"{len(xlsx_files)} .xlsx files have been loaded from the ZIP.")
+            except Exception as e:
+                messagebox.showerror("ZIP Processing Error", str(e))
 
     def select_save_folder(self):
         folder_path = filedialog.askdirectory()
@@ -192,15 +277,20 @@ class ExcelProcessorApp:
                 self.status_label.config(text=str(e))
                 break
             self.status_label.config(text=f"{os.path.basename(file)} completed")
-        
-        if self.stopped :
+
+        if self.stopped:
             self.status_label.config(text="All tasks cancelled")
-        else :
+        else:
             self.status_label.config(text="All tasks completed")
         self.start_stop_button.config(text="Start")
         self.pause_resume_button.config(state=DISABLED)
         self.pause_resume_button.config(text="Pause")
         self.processing = False
+
+        # Clean up temporary directories
+        for temp_dir in self.temp_dirs:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        self.temp_dirs.clear()
 
     def read_excel_with_progress(self, file_path):
         wb = load_workbook(file_path, read_only=True)
@@ -306,6 +396,7 @@ class ExcelProcessorApp:
         return df
 
     def zip_output(self, source_dir, default_destination_dir):
+        split_large_csv_files(source_dir)
         folder_name = os.path.basename(source_dir.rstrip(os.sep))
         zip_filename = f"{folder_name}_{self.timestamp}.zip"
         zip_path = os.path.join(os.path.dirname(source_dir), zip_filename)
