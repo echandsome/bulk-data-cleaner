@@ -56,8 +56,8 @@ def filter_ghl_file(input_dir, filename, output_dir):
         df.columns = [f"Column{i+1}" for i in range(df.shape[1])]
         filtered_df = pd.DataFrame({
             "Email": df.iloc[:, 0],
-            "First_Name": df.iloc[:, 1],
-            "Last_Name": df.iloc[:, 2],
+            "First_Name": df.iloc[:, 2],
+            "Last_Name": df.iloc[:, 3],
             "Department": df.iloc[:, 6],
             "Job_Title": df.iloc[:, 7],
             "Job_Level": df.iloc[:, 8],
